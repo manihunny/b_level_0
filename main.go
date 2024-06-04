@@ -7,8 +7,9 @@ import (
 	"time"
 	_ "github.com/lib/pq"
 	"github.com/jmoiron/sqlx"
-	// stan "github.com/nats-io/stan.go"
 )
+
+const dbConnStr = "user=postgres password=RootPass dbname=level_0 sslmode=disable"
 
 type Order struct {
 	OrderUID    		string      `json:"order_uid" db:"order_uid"`
@@ -69,8 +70,7 @@ func main() {
 	mux.HandleFunc("GET /api/orders", getAllOrders)
 	mux.HandleFunc("GET /api/orders/{order_uid}", getOrderByID)
 	mux.HandleFunc("POST /api/orders", createOrder)
-	mux.HandleFunc("PUT /api/orders/{id}", updateOrder)		// должно содержать все поля записи (происходит полная замена объекта)
-	// mux.HandleFunc("PATCH /api/orders/{id}", modifyOrder)	// может содержать только те поля, которые необходимо изменить (происходит частичная замена объекта)
+	mux.HandleFunc("PUT /api/orders/{id}", updateOrder)
 	mux.HandleFunc("DELETE /api/orders/{id}", deleteOrder)
 
 	fmt.Println("Server started on port 80")
@@ -78,8 +78,7 @@ func main() {
 }
 
 func getAllOrders(w http.ResponseWriter, r *http.Request) {
-	connStr := "user=postgres password=RootPass dbname=level_0 sslmode=disable"
-	db, err := sqlx.Open("postgres", connStr)
+	db, err := sqlx.Open("postgres", dbConnStr)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
@@ -87,10 +86,18 @@ func getAllOrders(w http.ResponseWriter, r *http.Request) {
 	defer db.Close()
 
 	var orders []Order
-	err = db.Select(&orders, "SELECT * FROM orders LEFT JOIN deliveries ON deliveries.order_uid = orders.order_uid")
+	err = db.Select(&orders, "SELECT * FROM orders LEFT JOIN deliveries ON deliveries.order_uid = orders.order_uid LEFT JOIN payments ON payments.transaction = orders.order_uid")
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+
+	for i := range orders {
+		err = db.Select(&orders[i].Items, "SELECT * FROM items WHERE track_number = $1", orders[i].TrackNumber)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
 
 	err = json.NewEncoder(w).Encode(orders)
@@ -103,8 +110,7 @@ func getAllOrders(w http.ResponseWriter, r *http.Request) {
 func getOrderByID(w http.ResponseWriter, r *http.Request) {
 	order_uid := r.PathValue("order_uid")
 	
-	connStr := "user=postgres password=RootPass dbname=level_0 sslmode=disable"
-	db, err := sqlx.Open("postgres", connStr)
+	db, err := sqlx.Open("postgres", dbConnStr)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
@@ -112,7 +118,13 @@ func getOrderByID(w http.ResponseWriter, r *http.Request) {
 	defer db.Close()
 
 	var order Order
-	err = db.Get(&order, "SELECT * FROM orders WHERE order_uid = $1", order_uid)
+	err = db.Get(&order, "SELECT * FROM orders LEFT JOIN deliveries ON deliveries.order_uid = orders.order_uid LEFT JOIN payments ON payments.transaction = orders.order_uid WHERE orders.order_uid = $1", order_uid)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	err = db.Select(&order.Items, "SELECT * FROM items WHERE track_number = $1", order.TrackNumber)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -133,8 +145,7 @@ func createOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	connStr := "user=postgres password=RootPass dbname=level_0 sslmode=disable"
-	db, err := sqlx.Open("postgres", connStr)
+	db, err := sqlx.Open("postgres", dbConnStr)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
@@ -183,8 +194,7 @@ func updateOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	connStr := "user=postgres password=RootPass dbname=level_0 sslmode=disable"
-	db, err := sqlx.Open("postgres", connStr)
+	db, err := sqlx.Open("postgres", dbConnStr)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
@@ -228,8 +238,7 @@ func updateOrder(w http.ResponseWriter, r *http.Request) {
 func deleteOrder(w http.ResponseWriter, r *http.Request) {
 	orderUID := r.PathValue("id")
 
-	connStr := "user=postgres password=RootPass dbname=level_0 sslmode=disable"
-	db, err := sqlx.Open("postgres", connStr)
+	db, err := sqlx.Open("postgres", dbConnStr)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
@@ -244,25 +253,3 @@ func deleteOrder(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusOK)
 }
-
-// func modifyOrder(w http.ResponseWriter, r *http.Request) {
-// 	id, err := strconv.Atoi(r.PathValue("id"))
-// 	if err != nil {
-// 		http.Error(w, err.Error(), http.StatusBadRequest)
-// 		return
-// 	}
-// 	for i, task := range tasks {
-// 		if task.ID == id {
-// 			var updatedTask Task
-// 			err := json.NewDecoder(r.Body).Decode(&updatedTask)
-// 			if err != nil {
-// 				http.Error(w, err.Error(), http.StatusBadRequest)
-// 				return
-// 			}
-// 			tasks[i] = updatedTask
-// 			json.NewEncoder(w).Encode(updatedTask)
-// 			return
-// 		}
-// 	}
-// 	http.Error(w, "Task not found", http.StatusNotFound)
-// }
